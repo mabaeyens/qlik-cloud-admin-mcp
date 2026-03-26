@@ -143,9 +143,10 @@ async def qlikcloud_delete(path: str) -> str:
         ])
         if not items_raw.startswith("Error"):
             try:
-                items = json.loads(items_raw).get("data", [])
+                parsed = json.loads(items_raw)
+                items = parsed if isinstance(parsed, list) else parsed.get("data", [])
                 app_name = items[0].get("name", app_id) if items else app_id
-            except json.JSONDecodeError:
+            except (json.JSONDecodeError, AttributeError, IndexError):
                 app_name = app_id
         else:
             app_name = app_id
@@ -155,11 +156,12 @@ async def qlikcloud_delete(path: str) -> str:
         if spaces_raw.startswith("Error"):
             return spaces_raw
         try:
-            spaces_data = json.loads(spaces_raw)
+            parsed = json.loads(spaces_raw)
+            spaces_list = parsed if isinstance(parsed, list) else parsed.get("data", [])
         except json.JSONDecodeError:
             return f"Error: could not parse spaces response: {spaces_raw}"
 
-        matches = [s for s in spaces_data.get("data", []) if s.get("name") == RECYCLE_BIN_NAME]
+        matches = [s for s in spaces_list if s.get("name") == RECYCLE_BIN_NAME]
         if not matches:
             return (
                 f"Recycle bin not found: no space named '{RECYCLE_BIN_NAME}' exists. "
