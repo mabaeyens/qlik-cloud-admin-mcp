@@ -99,6 +99,16 @@ async def _move_to_recycle_bin(resource_type: str, resource_id: str, space_id: s
             "raw", "put", f"v1/apps/{resource_id}/space",
             "--body", json.dumps({"spaceId": space_id}),
         ])
+    if resource_type == "automation":
+        return await _run_qlik([
+            "raw", "post", f"v1/automations/{resource_id}/actions/change-space",
+            "--body", json.dumps({"spaceId": space_id}),
+        ])
+    if resource_type == "dataproduct":
+        return await _run_qlik([
+            "raw", "post", f"v1/data-governance/data-products/{resource_id}/actions/move",
+            "--body", json.dumps({"spaceId": space_id}),
+        ])
     # Additional resource types will be added here in subsequent steps
     return f"Error: unsupported resource type '{resource_type}' for recycle bin move."
 
@@ -161,9 +171,10 @@ async def qlikcloud_delete(path: str) -> str:
     """Delete a Qlik Cloud resource via qlik raw.
 
     Governance rules enforced by resource type:
-    - Apps (v1/apps/...): never hard-deleted. Moved to the Recycle Bin space
-      so admins have a recovery window.
-    - Spaces (v1/spaces/...): blocked. Spaces must be deleted manually in the
+    - Apps (v1/apps/...): moved to the Recycle Bin space, never hard-deleted.
+    - Automations (v1/automations/...): moved to the Recycle Bin space.
+    - Data products (v1/data-governance/data-products/...): moved to the Recycle Bin space.
+    - Spaces (v1/spaces/...): blocked. Must be deleted manually in the
       Qlik Cloud Management Console.
     - All other resources: deleted after user confirmation.
 
@@ -206,6 +217,10 @@ def _detect_recycle_bin_resource(normalized: str) -> tuple[str, str] | tuple[Non
     segments = normalized.split("/")
     if normalized.startswith("v1/apps/") and len(segments) > 2:
         return "app", segments[2]
+    if normalized.startswith("v1/automations/") and len(segments) > 2:
+        return "automation", segments[2]
+    if normalized.startswith("v1/data-governance/data-products/") and len(segments) > 3:
+        return "dataproduct", segments[3]
     # Additional resource types will be added here in subsequent steps
     return None, None
 
