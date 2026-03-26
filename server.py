@@ -12,7 +12,7 @@ load_dotenv()
 mcp = FastMCP("qlik-cloud-admin")
 
 QLIK_API_KEY = os.getenv("QLIK_API_KEY", "")
-RECYCLE_BIN_NAME = "App Recycle Bin"
+RECYCLE_BIN_NAME = "Recycle Bin"
 
 
 def _build_env() -> dict:
@@ -48,6 +48,59 @@ async def _run_qlik(args: list[str]) -> str:
         return f"Error (exit {proc.returncode}): {err or out}"
 
     return out or "(empty response)"
+
+
+# ---------------------------------------------------------------------------
+# Recycle bin helpers
+# ---------------------------------------------------------------------------
+
+async def _resolve_name(resource_id: str, resource_type: str) -> str:
+    """Try to resolve a human-readable name for a resource via the items API.
+    Falls back to the resource ID if resolution fails."""
+    raw = await _run_qlik([
+        "raw", "get", "v1/items",
+        "--query", f"resourceId={resource_id}",
+        "--query", f"resourceType={resource_type}",
+    ])
+    if raw.startswith("Error"):
+        return resource_id
+    try:
+        parsed = json.loads(raw)
+        items = parsed if isinstance(parsed, list) else parsed.get("data", [])
+        return items[0].get("name", resource_id) if items else resource_id
+    except (json.JSONDecodeError, AttributeError, IndexError):
+        return resource_id
+
+
+async def _find_recycle_bin() -> tuple[str, None] | tuple[None, str]:
+    """Return (space_id, None) if the Recycle Bin space exists, or (None, error_message)."""
+    raw = await _run_qlik(["raw", "get", "v1/spaces", "--query", f"name={RECYCLE_BIN_NAME}"])
+    if raw.startswith("Error"):
+        return None, raw
+    try:
+        parsed = json.loads(raw)
+        spaces = parsed if isinstance(parsed, list) else parsed.get("data", [])
+        matches = [s for s in spaces if s.get("name") == RECYCLE_BIN_NAME]
+        if not matches:
+            return None, (
+                f"Recycle bin unavailable: no shared space named '{RECYCLE_BIN_NAME}' "
+                "exists in this tenant. That space must be created by an admin before "
+                "resources can be retired."
+            )
+        return matches[0]["id"], None
+    except (json.JSONDecodeError, AttributeError):
+        return None, f"Error: could not parse spaces response: {raw}"
+
+
+async def _move_to_recycle_bin(resource_type: str, resource_id: str, space_id: str) -> str:
+    """Move a resource to the Recycle Bin space using the appropriate API endpoint."""
+    if resource_type == "app":
+        return await _run_qlik([
+            "raw", "put", f"v1/apps/{resource_id}/space",
+            "--body", json.dumps({"spaceId": space_id}),
+        ])
+    # Additional resource types will be added here in subsequent steps
+    return f"Error: unsupported resource type '{resource_type}' for recycle bin move."
 
 
 # ---------------------------------------------------------------------------
@@ -108,7 +161,7 @@ async def qlikcloud_delete(path: str) -> str:
     """Delete a Qlik Cloud resource via qlik raw.
 
     Governance rules enforced by resource type:
-    - Apps (v1/apps/...): never hard-deleted. Moved to the App Recycle Bin space
+    - Apps (v1/apps/...): never hard-deleted. Moved to the Recycle Bin space
       so admins have a recovery window.
     - Spaces (v1/spaces/...): blocked. Spaces must be deleted manually in the
       Qlik Cloud Management Console.
@@ -129,57 +182,32 @@ async def qlikcloud_delete(path: str) -> str:
             "Spaces must be deleted manually in the Qlik Cloud Management Console."
         )
 
-    # --- Apps: recycle bin flow ---
-    if normalized.startswith("v1/apps"):
-        app_id = normalized.split("/")[2] if len(normalized.split("/")) > 2 else None
-        if not app_id:
-            return "Error: could not extract app ID from path."
-
-        # Resolve app name
-        items_raw = await _run_qlik([
-            "raw", "get", "v1/items",
-            "--query", f"resourceId={app_id}",
-            "--query", "resourceType=app",
-        ])
-        if not items_raw.startswith("Error"):
-            try:
-                parsed = json.loads(items_raw)
-                items = parsed if isinstance(parsed, list) else parsed.get("data", [])
-                app_name = items[0].get("name", app_id) if items else app_id
-            except (json.JSONDecodeError, AttributeError, IndexError):
-                app_name = app_id
-        else:
-            app_name = app_id
-
-        # Find recycle bin
-        spaces_raw = await _run_qlik(["raw", "get", "v1/spaces", "--query", f"name={RECYCLE_BIN_NAME}"])
-        if spaces_raw.startswith("Error"):
-            return spaces_raw
-        try:
-            parsed = json.loads(spaces_raw)
-            spaces_list = parsed if isinstance(parsed, list) else parsed.get("data", [])
-        except json.JSONDecodeError:
-            return f"Error: could not parse spaces response: {spaces_raw}"
-
-        matches = [s for s in spaces_list if s.get("name") == RECYCLE_BIN_NAME]
-        if not matches:
-            return (
-                f"Recycle bin unavailable: no managed space named '{RECYCLE_BIN_NAME}' exists in this tenant. "
-                "App retirement cannot proceed until that space is set up by an admin."
-            )
-
-        body = json.dumps({"spaceId": matches[0]["id"]})
-        result = await _run_qlik(["raw", "put", f"v1/apps/{app_id}/space", "--body", body])
+    # --- Recycle bin resources ---
+    resource_type, resource_id = _detect_recycle_bin_resource(normalized)
+    if resource_type:
+        name = await _resolve_name(resource_id, resource_type)
+        space_id, err = await _find_recycle_bin()
+        if err:
+            return err
+        result = await _move_to_recycle_bin(resource_type, resource_id, space_id)
         if result.startswith("Error"):
             return result
-
         return (
-            f"App '{app_name}' ({app_id}) has been moved to '{RECYCLE_BIN_NAME}'. "
+            f"'{name}' ({resource_id}) has been moved to '{RECYCLE_BIN_NAME}'. "
             "It is no longer visible to end users but has not been hard-deleted."
         )
 
     # --- Everything else: proceed ---
     return await _run_qlik(["raw", "delete", path])
+
+
+def _detect_recycle_bin_resource(normalized: str) -> tuple[str, str] | tuple[None, None]:
+    """Return (resource_type, resource_id) for paths that use the recycle bin flow."""
+    segments = normalized.split("/")
+    if normalized.startswith("v1/apps/") and len(segments) > 2:
+        return "app", segments[2]
+    # Additional resource types will be added here in subsequent steps
+    return None, None
 
 
 if __name__ == "__main__":
