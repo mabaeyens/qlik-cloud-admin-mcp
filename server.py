@@ -99,6 +99,27 @@ async def _move_to_recycle_bin(resource_type: str, resource_id: str, space_id: s
             "raw", "put", f"v1/apps/{resource_id}/space",
             "--body", json.dumps({"spaceId": space_id}),
         ])
+    if resource_type == "automation":
+        return await _run_qlik([
+            "raw", "post", f"v1/automations/{resource_id}/actions/change-space",
+            "--body", json.dumps({"spaceId": space_id}),
+        ])
+    if resource_type == "datafile":
+        raw = await _run_qlik([
+            "raw", "post", "v1/data-files/actions/change-space",
+            "--body", json.dumps({"change-space": [{"id": resource_id, "spaceId": space_id}]}),
+        ])
+        if raw.startswith("Error"):
+            return raw
+        # 207 Multi-Status: inspect per-item result
+        try:
+            items = json.loads(raw).get("data", [])
+            if items and items[0].get("status", 200) >= 400:
+                detail = items[0].get("detail") or items[0].get("title", "unknown error")
+                return f"Error: data file move failed: {detail}"
+        except (json.JSONDecodeError, AttributeError):
+            pass
+        return raw
     return f"Error: unsupported resource type '{resource_type}' for recycle bin move."
 
 
@@ -161,8 +182,8 @@ async def qlikcloud_delete(path: str) -> str:
 
     Supported resources and their governance behaviour:
     - Apps (v1/apps/...): moved to the Recycle Bin shared space, never hard-deleted.
-    - Automations (v1/automations/...): hard-deleted after confirmation.
-    - Data files (v1/data-files/...): hard-deleted after confirmation.
+    - Automations (v1/automations/...): moved to the Recycle Bin shared space.
+    - Data files (v1/data-files/...): moved to the Recycle Bin shared space.
     - Spaces (v1/spaces/...): blocked. Must be deleted manually in the
       Qlik Cloud Management Console.
     - All other resource types: not supported by this tool.
@@ -197,10 +218,6 @@ async def qlikcloud_delete(path: str) -> str:
             "It is no longer visible to end users but has not been hard-deleted."
         )
 
-    # --- Automations and data files: hard delete ---
-    if normalized.startswith("v1/automations/") or normalized.startswith("v1/data-files/"):
-        return await _run_qlik(["raw", "delete", path])
-
     # --- Everything else: not supported ---
     return (
         "Blocked: this resource type is not supported by this tool. "
@@ -213,6 +230,10 @@ def _detect_recycle_bin_resource(normalized: str) -> tuple[str, str] | tuple[Non
     segments = normalized.split("/")
     if normalized.startswith("v1/apps/") and len(segments) > 2:
         return "app", segments[2]
+    if normalized.startswith("v1/automations/") and len(segments) > 2:
+        return "automation", segments[2]
+    if normalized.startswith("v1/data-files/") and len(segments) > 2:
+        return "datafile", segments[2]
     return None, None
 
 
