@@ -23,9 +23,9 @@ It demonstrates two things:
    any admin operation becomes available as a natural language conversation in Claude Desktop.
 
 2. **Governance** - MCP tools can encode business rules. This server shows a concrete example:
-   deleting an app does not hard-delete it. Instead, it moves the app to an "App Recycle Bin"
-   space, giving admins a recovery window. Deleting spaces is blocked entirely and redirected
-   to the Qlik Cloud Management Console.
+   deleting a resource does not hard-delete it. Instead, it moves it to a "Recycle Bin"
+   shared space, giving admins a recovery window. Deleting spaces is blocked entirely and
+   redirected to the Qlik Cloud Management Console.
 
 This server complements the official [Qlik MCP Server](https://help.qlik.com/en-US/cloud-services/Subsystems/Hub/Content/Sense_Hub/QlikMCP/Qlik-MCP-server-tools.htm),
 which covers analytics operations. This one covers admin and governance operations that the
@@ -74,10 +74,11 @@ QLIK_API_KEY=your_api_key_here
 
 If you leave it empty, the server falls back to the credentials in your qlik-cli context.
 
-### 4. Create the App Recycle Bin space
+### 4. Create the Recycle Bin space
 
-In Qlik Cloud, create a **managed space** named exactly `App Recycle Bin` and restrict
-membership to admins only. The delete tool will move apps there instead of hard-deleting them.
+In Qlik Cloud, create a **shared space** named exactly `Recycle Bin`. Restrict membership
+to admins only. The delete tool will move apps, automations, and data files there instead
+of hard-deleting them.
 
 ### 5. Configure Claude Desktop
 
@@ -123,9 +124,11 @@ Fully quit and reopen Claude Desktop. The server should appear under Settings > 
 
 ### Governance rules in qlikcloud_delete
 
-- **Apps** - never hard-deleted. The app is moved to the "App Recycle Bin" managed space.
+- **Apps** - moved to the "Recycle Bin" shared space, never hard-deleted.
+- **Automations** - moved to the "Recycle Bin" shared space, never hard-deleted.
+- **Data files** - moved to the "Recycle Bin" shared space, never hard-deleted.
 - **Spaces** - blocked. Must be deleted manually in the Qlik Cloud Management Console.
-- **Everything else** - proceeds after explicit user confirmation.
+- **All other resource types** - not supported by this tool.
 
 ---
 
@@ -140,6 +143,18 @@ v1/apps/{appId}
 ```
 
 Reference: https://qlik.dev/toolkits/qlik-cli/raw/raw/
+
+---
+
+## Next Steps
+
+- **Ownership transfer on retirement** - when a resource is moved to the Recycle Bin,
+  also reassign its ownership to the admin account to prevent the original owner from
+  restoring it without admin involvement.
+
+- **Personal space resources** - resources with no `spaceId` (personal space) may behave
+  differently or fail when moved via the current API endpoints. This needs dedicated
+  handling before the tool can be considered reliable for all resources.
 
 ---
 
