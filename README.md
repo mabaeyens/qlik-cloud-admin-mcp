@@ -38,7 +38,7 @@ official server does not expose today.
 - [uv](https://docs.astral.sh/uv/) installed on your machine
 - [qlik-cli](https://qlik.dev/toolkits/qlik-cli/) installed and configured with a context
   pointing to your Qlik Cloud tenant
-- A Qlik Cloud API key with tenant admin permissions
+- A [Qlik Cloud API key](https://help.qlik.com/en-US/cloud-services/Subsystems/Hub/Content/Sense_Hub/Admin/mc-generate-api-keys.htm) with tenant admin permissions
 - Claude Desktop
 
 ---
