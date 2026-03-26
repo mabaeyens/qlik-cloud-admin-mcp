@@ -99,12 +99,6 @@ async def _move_to_recycle_bin(resource_type: str, resource_id: str, space_id: s
             "raw", "put", f"v1/apps/{resource_id}/space",
             "--body", json.dumps({"spaceId": space_id}),
         ])
-    if resource_type == "dataproduct":
-        return await _run_qlik([
-            "raw", "post", f"v1/data-governance/data-products/{resource_id}/actions/move",
-            "--body", json.dumps({"spaceId": space_id}),
-        ])
-    # Additional resource types will be added here in subsequent steps
     return f"Error: unsupported resource type '{resource_type}' for recycle bin move."
 
 
@@ -165,19 +159,19 @@ async def qlikcloud_put(path: str, body: str) -> str:
 async def qlikcloud_delete(path: str) -> str:
     """Delete a Qlik Cloud resource via qlik raw.
 
-    Governance rules enforced by resource type:
-    - Apps (v1/apps/...): moved to the Recycle Bin space, never hard-deleted.
-    - Data products (v1/data-governance/data-products/...): moved to the Recycle Bin space.
-    - Automations (v1/automations/...): hard-deleted after confirmation (recycle bin not yet supported).
+    Supported resources and their governance behaviour:
+    - Apps (v1/apps/...): moved to the Recycle Bin shared space, never hard-deleted.
+    - Automations (v1/automations/...): hard-deleted after confirmation.
+    - Data files (v1/data-files/...): hard-deleted after confirmation.
     - Spaces (v1/spaces/...): blocked. Must be deleted manually in the
       Qlik Cloud Management Console.
-    - All other resources: deleted after user confirmation.
+    - All other resource types: not supported by this tool.
 
     IMPORTANT: Before calling this tool, tell the user exactly what will be
     deleted and wait for explicit confirmation.
 
     Args:
-        path: API path, e.g. v1/datasets/abc123
+        path: API path, e.g. v1/automations/abc123
     """
     normalized = path.strip().lstrip("/")
 
@@ -188,7 +182,7 @@ async def qlikcloud_delete(path: str) -> str:
             "Spaces must be deleted manually in the Qlik Cloud Management Console."
         )
 
-    # --- Recycle bin resources ---
+    # --- Apps: recycle bin ---
     resource_type, resource_id = _detect_recycle_bin_resource(normalized)
     if resource_type:
         name = await _resolve_name(resource_id, resource_type)
@@ -203,8 +197,15 @@ async def qlikcloud_delete(path: str) -> str:
             "It is no longer visible to end users but has not been hard-deleted."
         )
 
-    # --- Everything else: proceed ---
-    return await _run_qlik(["raw", "delete", path])
+    # --- Automations and data files: hard delete ---
+    if normalized.startswith("v1/automations/") or normalized.startswith("v1/data-files/"):
+        return await _run_qlik(["raw", "delete", path])
+
+    # --- Everything else: not supported ---
+    return (
+        "Blocked: this resource type is not supported by this tool. "
+        "Supported: apps (recycle bin), automations, and data files."
+    )
 
 
 def _detect_recycle_bin_resource(normalized: str) -> tuple[str, str] | tuple[None, None]:
@@ -212,9 +213,6 @@ def _detect_recycle_bin_resource(normalized: str) -> tuple[str, str] | tuple[Non
     segments = normalized.split("/")
     if normalized.startswith("v1/apps/") and len(segments) > 2:
         return "app", segments[2]
-    if normalized.startswith("v1/data-governance/data-products/") and len(segments) > 3:
-        return "dataproduct", segments[3]
-    # Additional resource types will be added here in subsequent steps
     return None, None
 
 
