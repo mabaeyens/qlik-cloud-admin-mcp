@@ -1,0 +1,13 @@
+[project]
+name = "qlik-cloud-admin-mcp"
+version = "0.1.0"
+description = "Local MCP server for Qlik Cloud admin operations via qlik-cli"
+requires-python = ">=3.10"
+dependencies = [
+    "mcp[cli]>=1.2.0",
+    "python-dotenv>=1.0.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
