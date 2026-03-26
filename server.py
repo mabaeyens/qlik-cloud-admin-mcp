@@ -164,8 +164,8 @@ async def qlikcloud_delete(path: str) -> str:
         matches = [s for s in spaces_list if s.get("name") == RECYCLE_BIN_NAME]
         if not matches:
             return (
-                f"Recycle bin not found: no space named '{RECYCLE_BIN_NAME}' exists. "
-                "Create a managed space with that name restricted to admins, then retry."
+                f"Recycle bin unavailable: no managed space named '{RECYCLE_BIN_NAME}' exists in this tenant. "
+                "App retirement cannot proceed until that space is set up by an admin."
             )
 
         body = json.dumps({"spaceId": matches[0]["id"]})
