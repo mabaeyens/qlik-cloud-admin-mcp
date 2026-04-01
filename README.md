@@ -127,6 +127,23 @@ If you have both this server and the [official Qlik MCP Server](https://help.qli
 | `qlikcloud_post` | POST to any Qlik Cloud REST endpoint |
 | `qlikcloud_put` | PUT to any Qlik Cloud REST endpoint (asks for confirmation) |
 | `qlikcloud_delete` | DELETE with governance rules enforced (see below) |
+| `qlikcloud_assistant_chat` | Send a message to a Qlik Answers assistant and get a response |
+
+The generic GET/POST/PUT tools are fallbacks. When the official Qlik MCP Server covers an operation (opening apps, searching fields, listing sheets), prefer those tools instead.
+
+### qlikcloud_assistant_chat
+
+Query a Qlik Answers assistant with conversation context. On the first call, omit `thread_id` and a new thread is created automatically. Pass the returned `thread_id` on follow-up calls to continue the conversation.
+
+```
+qlikcloud_assistant_chat(
+    assistant_id = "abc123",   # from v1/assistants
+    message     = "What were total sales last quarter?",
+    thread_id   = None         # omit on first call; reuse on follow-ups
+)
+```
+
+The response includes the answer and the `thread_id` to use in the next turn.
 
 ### Governance rules in qlikcloud_delete
 
