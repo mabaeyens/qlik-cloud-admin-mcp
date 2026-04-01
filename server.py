@@ -131,6 +131,10 @@ async def _move_to_recycle_bin(resource_type: str, resource_id: str, space_id: s
 async def qlikcloud_get(path: str, query_params: Optional[str] = None) -> str:
     """Send a GET request to a Qlik Cloud API endpoint via qlik raw.
 
+    Use this only when no tool in the official Qlik MCP Server covers the
+    operation. Prefer Qlik MCP tools for analytics operations such as opening
+    apps, searching fields, listing sheets, or reading app content.
+
     Args:
         path: API path, e.g. v1/spaces
         query_params: Optional query string, e.g. "limit=10&type=shared"
@@ -146,6 +150,10 @@ async def qlikcloud_get(path: str, query_params: Optional[str] = None) -> str:
 async def qlikcloud_post(path: str, body: str) -> str:
     """Send a POST request to a Qlik Cloud API endpoint via qlik raw.
 
+    Use this only when no tool in the official Qlik MCP Server covers the
+    operation. Prefer Qlik MCP tools for analytics operations such as opening
+    apps, searching fields, listing sheets, or reading app content.
+
     Args:
         path: API path, e.g. v1/spaces
         body: JSON body as a string, e.g. '{"name": "My Space", "type": "shared"}'
@@ -160,6 +168,10 @@ async def qlikcloud_post(path: str, body: str) -> str:
 @mcp.tool()
 async def qlikcloud_put(path: str, body: str) -> str:
     """Send a PUT request to a Qlik Cloud API endpoint via qlik raw.
+
+    Use this only when no tool in the official Qlik MCP Server covers the
+    operation. Prefer Qlik MCP tools for analytics operations such as opening
+    apps, searching fields, listing sheets, or reading app content.
 
     IMPORTANT: PUT overwrites the existing resource. Before calling this tool,
     show the user what will be changed and the full body that will be sent,
