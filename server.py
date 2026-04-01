@@ -336,29 +336,42 @@ def _build_csv_format(load_options: dict) -> str:
     return ", ".join(parts)
 
 
-def _generate_dataset_script(dataset: dict, space_name: str) -> str:
-    """Generate a Qlik LOAD script section for a single dataset."""
-    store_type = (
-        dataset.get("dataAssetInfo", {}).get("dataStoreInfo", {}).get("type", "")
-    )
-    technical_name = dataset.get("technicalName", "")
-    ds_name = dataset.get("name", "unknown")
-    table_name = _dataset_table_name(ds_name)
+def _parse_sql_table_ref(technical_name: str) -> str:
+    """Convert technicalName to a double-quoted SQL table reference.
+
+    Input:  AHR_DB'.'schema'.'TABLE
+    Output: "AHR_DB"."schema"."TABLE"
+    """
+    parts = technical_name.split("'.'")
+    return ".".join(f'"{p}"' for p in parts)
+
+
+def _generate_datafiles_script(dataset: dict, space_name: str) -> str:
+    """LOAD block for a DataFiles (CSV/delimited) dataset."""
+    table_name = _dataset_table_name(dataset.get("name", "unknown"))
     fields = sorted(
         dataset.get("schema", {}).get("dataFields", []),
         key=lambda x: x.get("index", 0),
     )
     field_list = ",\n".join(f"    [{f['name']}]" for f in fields)
+    fmt = _build_csv_format(dataset.get("schema", {}).get("loadOptions", {}))
+    lib_path = f"lib://{space_name}:DataFiles/{dataset.get('technicalName', '')}"
+    return f"[{table_name}]:\nLOAD\n{field_list}\nFROM [{lib_path}]\n({fmt});\n"
 
-    if store_type == "qix-datafiles":
-        fmt = _build_csv_format(dataset.get("schema", {}).get("loadOptions", {}))
-        lib_path = f"lib://{space_name}:DataFiles/{technical_name}"
-        return f"[{table_name}]:\nLOAD\n{field_list}\nFROM [{lib_path}]\n({fmt});\n"
 
-    ds_type = dataset.get("type", "unknown")
+def _generate_sql_load_block(dataset: dict) -> str:
+    """LOAD/SELECT block for a CONNECTION_BASED_DATASET (no LIB CONNECT line)."""
+    table_name = dataset.get("name", "unknown")
+    fields = sorted(
+        dataset.get("schema", {}).get("dataFields", []),
+        key=lambda x: x.get("index", 0),
+    )
+    load_fields = ",\n".join(f"    [{f['name']}]" for f in fields)
+    select_fields = ",\n    ".join(f'"{f["name"]}"' for f in fields)
+    table_ref = _parse_sql_table_ref(dataset.get("technicalName", ""))
     return (
-        f"// TODO: '{ds_name}' (type={ds_type}, store={store_type})"
-        " - script generation not yet supported for this source type\n"
+        f"[{table_name}]:\nLOAD\n{load_fields};\n"
+        f"SELECT {select_fields}\nFROM {table_ref};\n"
     )
 
 
@@ -368,15 +381,25 @@ async def qlikcloud_create_app_from_data_product(
     data_product_name: Optional[str] = None,
     data_product_id: Optional[str] = None,
     space_id: Optional[str] = None,
+    connection_name: Optional[str] = None,
 ) -> str:
     """Create a new Qlik app with a load script generated from a Data Product.
 
-    Fetches all datasets in the data product, generates a LOAD script section
-    for each one, creates an empty app, and sets the script. No Data Manager
-    involvement - the script is written directly from dataset metadata.
+    Fetches all datasets in the data product, generates a LOAD script for each
+    one, creates an empty app, and sets the script. No Data Manager involved.
 
-    Supported source types: DataFiles (CSV, delimited text).
-    Other source types (e.g. Snowflake) generate a TODO comment placeholder.
+    Supported source types:
+    - DataFiles (CSV, delimited text): generates LOAD FROM lib://Space:DataFiles/...
+    - Connection-based (Snowflake, etc.): generates LIB CONNECT TO + LOAD/SELECT.
+      Datasets sharing the same underlying connection are grouped under a single
+      LIB CONNECT TO statement.
+
+    For connection-based datasets, provide connection_name (e.g. "MySnowflakeConn")
+    so the tool can write LIB CONNECT TO [lib://SpaceName:connection_name]. If
+    omitted, a <<CONNECTION_NAME>> placeholder is written and must be filled in
+    manually before the script can run.
+
+    Unsupported source types receive a // TODO comment placeholder.
 
     Provide either data_product_name (searched by name) or data_product_id
     (skips the lookup). If a name search returns more than one match, the tool
@@ -384,9 +407,13 @@ async def qlikcloud_create_app_from_data_product(
 
     Args:
         app_name: Name for the new app
-        data_product_name: Data product name to search for (case-insensitive partial match)
-        data_product_id: Data product ID (from data-governance/data-products) - skips name lookup
+        data_product_name: Data product name to search for (partial match)
+        data_product_id: Data product ID - skips name lookup
         space_id: Space ID to create the app in (defaults to personal space if omitted)
+        connection_name: Qlik connection name for connection-based datasets,
+            e.g. "MySnowflakeConn". Ask the user for this if the data product
+            contains Snowflake or other connector-based datasets and it was not
+            provided.
     """
     if not data_product_name and not data_product_id:
         return "Error: provide either data_product_name or data_product_id."
@@ -429,8 +456,8 @@ async def qlikcloud_create_app_from_data_product(
     if not dataset_ids:
         return f"Error: data product '{data_product_id}' has no datasets."
 
-    # --- Fetch metadata for each dataset and generate script sections ---
-    script_sections = []
+    # --- Fetch metadata for each dataset ---
+    datasets = []
     skipped = []
     space_name_cache: dict[str, str] = {}
 
@@ -448,14 +475,58 @@ async def qlikcloud_create_app_from_data_product(
         ds_space_id = dataset.get("spaceId", "")
         if ds_space_id not in space_name_cache:
             space_name_cache[ds_space_id] = await _get_space_name(ds_space_id)
-        space_name = space_name_cache[ds_space_id]
+        datasets.append((dataset, space_name_cache[ds_space_id]))
 
-        script_sections.append(_generate_dataset_script(dataset, space_name))
+    if not datasets:
+        return "Error: could not fetch metadata for any dataset in this data product."
 
-    if not script_sections:
+    # --- Build script ---
+    # DataFiles datasets: one LOAD block each, no LIB CONNECT needed
+    # Connection-based datasets: group by dataStoreInfo.id, one LIB CONNECT per group
+    script_parts = []
+    conn_groups: dict[str, list[tuple[dict, str]]] = {}
+
+    for dataset, space_name in datasets:
+        store_info = dataset.get("dataAssetInfo", {}).get("dataStoreInfo", {})
+        store_type = store_info.get("type", "")
+        ds_type = dataset.get("type", "")
+
+        if store_type == "qix-datafiles":
+            script_parts.append(_generate_datafiles_script(dataset, space_name))
+        elif ds_type == "CONNECTION_BASED_DATASET":
+            store_id = store_info.get("id", "unknown")
+            conn_groups.setdefault(store_id, []).append((dataset, space_name))
+        else:
+            ds_name = dataset.get("name", "unknown")
+            script_parts.append(
+                f"// TODO: '{ds_name}' (type={ds_type}, store={store_type})"
+                " - script generation not supported for this source type\n"
+            )
+
+    # Emit one LIB CONNECT block per unique connection
+    conn_placeholder_idx = 1
+    for store_id, group in conn_groups.items():
+        _, space_name = group[0]
+        if connection_name:
+            conn_ref = connection_name
+        else:
+            conn_ref = (
+                f"<<CONNECTION_NAME>>"
+                if len(conn_groups) == 1
+                else f"<<CONNECTION_NAME_{conn_placeholder_idx}>>"
+            )
+            conn_placeholder_idx += 1
+        lib_connect = f"LIB CONNECT TO [lib://{space_name}:{conn_ref}];\n"
+        load_blocks = "\n".join(_generate_sql_load_block(ds) for ds, _ in group)
+        script_parts.append(f"{lib_connect}\n{load_blocks}")
+
+    if not script_parts:
         return "Error: could not generate script for any dataset in this data product."
 
-    full_script = "\n".join(script_sections)
+    # Warn if connection name was needed but not provided
+    needs_conn_warning = conn_groups and not connection_name
+
+    full_script = "\n".join(script_parts)
 
     # --- Create the app ---
     app_body: dict = {"attributes": {"name": app_name}}
@@ -480,7 +551,13 @@ async def qlikcloud_create_app_from_data_product(
             f"Script content:\n{full_script}"
         )
 
-    result = [f"App '{app_name}' created (id: {app_id}). Script set with {len(script_sections)} dataset(s)."]
+    result = [f"App '{app_name}' created (id: {app_id}). Script set with {len(datasets)} dataset(s)."]
+    if needs_conn_warning:
+        result.append(
+            "The script contains <<CONNECTION_NAME>> placeholder(s). "
+            "Open the app's load script editor and replace each placeholder with "
+            "the actual Qlik connection name before reloading."
+        )
     if skipped:
         result.append(f"Skipped {len(skipped)} dataset(s): {skipped}")
     return "\n".join(result)
