@@ -128,6 +128,7 @@ If you have both this server and the [official Qlik MCP Server](https://help.qli
 | `qlikcloud_put` | PUT to any Qlik Cloud REST endpoint (asks for confirmation) |
 | `qlikcloud_delete` | DELETE with governance rules enforced (see below) |
 | `qlikcloud_assistant_chat` | Send a message to a Qlik Answers assistant and get a response |
+| `qlikcloud_create_app_from_data_product` | Create a Qlik app with a load script generated from a Data Product |
 
 The generic GET/POST/PUT tools are fallbacks. When the official Qlik MCP Server covers an operation (opening apps, searching fields, listing sheets), prefer those tools instead.
 
@@ -144,6 +145,27 @@ qlikcloud_assistant_chat(
 ```
 
 The response includes the answer and the `thread_id` to use in the next turn.
+
+### qlikcloud_create_app_from_data_product
+
+Creates a Qlik app with a load script built directly from Data Product metadata - no Data Manager involved. For each dataset in the data product, the tool fetches its schema and source metadata from the data-governance API and generates a `LOAD` statement.
+
+**Prerequisites:**
+- Set `QLIK_TENANT_URL` in `.env` (e.g. `https://your-tenant.eu.qlikcloud.com`)
+- The data-governance API must be accessible from your tenant
+
+**Supported source types:** DataFiles (CSV, delimited text). Datasets backed by other connection types (Snowflake, etc.) generate a `// TODO` comment placeholder in the script.
+
+**Usage:**
+```
+qlikcloud_create_app_from_data_product(
+    app_name           = "My App",
+    data_product_name  = "Sales Data Product",  # or use data_product_id
+    space_id           = "abc123"               # optional, defaults to personal space
+)
+```
+
+> **Note on lineage:** Creating apps this way does not automatically register lineage in the Qlik Cloud catalog. Lineage is only established through the Data Manager flow. This is a known limitation.
 
 ### Governance rules in qlikcloud_delete
 
@@ -178,6 +200,12 @@ Reference: https://qlik.dev/toolkits/qlik-cli/raw/raw/
 - **Personal space resources** - resources with no `spaceId` (personal space) may behave
   differently or fail when moved via the current API endpoints. This needs dedicated
   handling before the tool can be considered reliable for all resources.
+
+---
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) for release notes.
 
 ---
 
