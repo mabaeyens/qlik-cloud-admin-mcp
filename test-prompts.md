@@ -18,11 +18,11 @@ They are grouped by entity and HTTP method, roughly ordered from read-only to de
 
 **Retire an app - recycle bin missing (should be blocked)**
 > Delete the app called "Test App DO NOT USE".
-> *(Pre-condition: "App Recycle Bin" space does not exist yet. Expected: tool refuses and explains the space must be created.)*
+> *(Pre-condition: "Recycle Bin" space does not exist yet. Expected: tool refuses and explains the space must be created.)*
 
 **Retire an app - happy path**
 > Delete the app called "Test App DO NOT USE".
-> *(Pre-condition: "App Recycle Bin" space exists. Expected: app is moved, not hard-deleted.)*
+> *(Pre-condition: "Recycle Bin" space exists. Expected: app is moved, not hard-deleted.)*
 
 ---
 
@@ -82,6 +82,45 @@ They are grouped by entity and HTTP method, roughly ordered from read-only to de
 
 **Trigger a reload**
 > Trigger a reload for the app called "Sales Overview". Find its ID first if needed.
+
+---
+
+## Assistants
+
+**List available assistants**
+> List all Qlik Answers assistants available in my tenant.
+
+**Ask a question (first turn)**
+> Ask the assistant with ID `abc123` what the total sales were last quarter.
+> *(Expected: response includes the answer and a thread_id.)*
+
+**Continue a conversation (follow-up)**
+> Using thread `xyz789`, ask the same assistant to break that down by region.
+> *(Expected: response uses context from the previous turn.)*
+
+---
+
+## Create App from Data Product
+
+**Create app - DataFiles source, happy path**
+> Create a Qlik app called "ADIF Punctuality" from the data product named "ADIF Demo".
+> *(Expected: app created, script set with LOAD FROM lib:// statements for each CSV dataset.)*
+
+**Create app - connection-based source, connection name provided**
+> Create a Qlik app called "Calidad Servicio" from the data product named "Calidad del Servicio", using connection name "Attunity_IOT.snowflakecomputing.com".
+> *(Expected: app created, script set with LIB CONNECT TO + LOAD/SELECT blocks grouped by connection.)*
+
+**Create app - connection-based source, connection name omitted**
+> Create a Qlik app called "Calidad Servicio" from the data product named "Calidad del Servicio".
+> *(Expected: Claude asks for the connection name before proceeding.)*
+
+**Create app - ambiguous data product name**
+> Create a Qlik app called "Test" from the data product named "Sales".
+> *(Expected: if multiple matches, tool returns the list and asks for the ID.)*
+
+**Create app - data product not found**
+> Create a Qlik app called "Test" from the data product named "this does not exist".
+> *(Expected: clear error, no app created.)*
 
 ---
 
