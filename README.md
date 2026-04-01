@@ -191,18 +191,6 @@ Reference: https://qlik.dev/toolkits/qlik-cli/raw/raw/
 
 ---
 
-## Next Steps
-
-- **Ownership transfer on retirement** - when a resource is moved to the Recycle Bin,
-  also reassign its ownership to the admin account to prevent the original owner from
-  restoring it without admin involvement.
-
-- **Personal space resources** - resources with no `spaceId` (personal space) may behave
-  differently or fail when moved via the current API endpoints. This needs dedicated
-  handling before the tool can be considered reliable for all resources.
-
----
-
 ## Changelog
 
 See [CHANGELOG.md](CHANGELOG.md) for release notes.
