@@ -237,6 +237,53 @@ def _detect_recycle_bin_resource(normalized: str) -> tuple[str, str] | tuple[Non
     return None, None
 
 
+@mcp.tool()
+async def qlikcloud_assistant_chat(
+    assistant_id: str,
+    message: str,
+    thread_id: Optional[str] = None,
+) -> str:
+    """Send a message to a Qlik Answers assistant and get a response.
+
+    Maintains conversation context across calls by reusing the same thread.
+    On the first call, omit thread_id and a new thread is created automatically.
+    Pass the returned thread_id on subsequent calls to continue the conversation.
+
+    Args:
+        assistant_id: ID of the assistant to query (use qlikcloud_get with path v1/assistants to list them)
+        message: The question or message to send
+        thread_id: Optional thread ID from a previous call to continue the conversation
+    """
+    # Create a thread if none provided
+    if not thread_id:
+        raw = await _run_qlik([
+            "raw", "post", f"v1/assistants/{assistant_id}/threads",
+            "--body", "{}",
+        ])
+        if raw.startswith("Error"):
+            return raw
+        try:
+            thread_id = json.loads(raw)["id"]
+        except (json.JSONDecodeError, KeyError):
+            return f"Error: could not create thread: {raw}"
+
+    # Post the interaction
+    raw = await _run_qlik([
+        "raw", "post", f"v1/assistants/{assistant_id}/threads/{thread_id}/interactions",
+        "--body", json.dumps({"prompt": message}),
+    ])
+    if raw.startswith("Error"):
+        return raw
+    try:
+        data = json.loads(raw)
+        content = data.get("response", {}).get("content", "")
+        if not content:
+            return f"Error: no response content in: {raw}"
+        return f"[thread_id: {thread_id}]\n\n{content}"
+    except (json.JSONDecodeError, AttributeError):
+        return f"Error: could not parse interaction response: {raw}"
+
+
 if __name__ == "__main__":
     if not QLIK_API_KEY:
         print(
