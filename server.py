@@ -12,6 +12,7 @@ load_dotenv()
 mcp = FastMCP("qlik-cloud-admin")
 
 QLIK_API_KEY = os.getenv("QLIK_API_KEY", "")
+QLIK_TENANT_URL = os.getenv("QLIK_TENANT_URL", "").rstrip("/")
 RECYCLE_BIN_NAME = "Recycle Bin"
 
 
@@ -294,6 +295,132 @@ async def qlikcloud_assistant_chat(
         return f"[thread_id: {thread_id}]\n\n{content}"
     except (json.JSONDecodeError, AttributeError):
         return f"Error: could not parse interaction response: {raw}"
+
+
+@mcp.tool()
+async def qlikcloud_create_app_from_data_product(
+    app_name: str,
+    data_product_name: Optional[str] = None,
+    data_product_id: Optional[str] = None,
+    space_id: Optional[str] = None,
+) -> str:
+    """Create a new Qlik app pre-wired to a Data Product via the Data Manager.
+
+    Creates an empty app, resolves the datasets inside the data product, and
+    returns a Data Manager deep-link for each dataset. Open each link in the
+    browser and click "Load data" to load the dataset - lineage from the app
+    to the data product is registered at that point by the Data Manager.
+
+    Provide either data_product_name (searched by name) or data_product_id
+    (skips the lookup). If a name search returns more than one match, the tool
+    returns the list and asks you to supply the ID instead.
+
+    Requires QLIK_TENANT_URL to be set in .env (e.g. https://your-tenant.eu.qlikcloud.com).
+
+    Args:
+        app_name: Name for the new app
+        data_product_name: Data product name to search for (case-insensitive partial match)
+        data_product_id: Data product ID (from data-governance/data-products) - skips name lookup
+        space_id: Space ID to create the app in (defaults to personal space if omitted)
+    """
+    if not QLIK_TENANT_URL:
+        return "Error: QLIK_TENANT_URL is not set in .env. Add it before using this tool."
+
+    if not data_product_name and not data_product_id:
+        return "Error: provide either data_product_name or data_product_id."
+
+    # --- Resolve data product ID from name ---
+    if not data_product_id:
+        raw = await _run_qlik([
+            "raw", "get", "v1/items",
+            "--query", "resourceType=dataproduct",
+            "--query", f"query={data_product_name}",
+        ])
+        if raw.startswith("Error"):
+            return raw
+        try:
+            parsed = json.loads(raw)
+            items = parsed if isinstance(parsed, list) else parsed.get("data", [])
+        except (json.JSONDecodeError, AttributeError):
+            return f"Error: could not parse items response: {raw}"
+
+        if not items:
+            return f"Error: no data product found matching '{data_product_name}'."
+        if len(items) > 1:
+            matches = "\n".join(f"  {i['name']} (id: {i['resourceId']})" for i in items)
+            return (
+                f"Multiple data products match '{data_product_name}'. "
+                f"Supply data_product_id instead:\n{matches}"
+            )
+        data_product_id = items[0]["resourceId"]
+
+    # --- Fetch dataset IDs from the data product ---
+    raw = await _run_qlik(["raw", "get", f"data-governance/data-products/{data_product_id}"])
+    if raw.startswith("Error"):
+        return raw
+    try:
+        dp = json.loads(raw)
+        dataset_ids = dp.get("datasetIds", [])
+    except (json.JSONDecodeError, AttributeError):
+        return f"Error: could not parse data product response: {raw}"
+
+    if not dataset_ids:
+        return f"Error: data product '{data_product_id}' has no datasets."
+
+    # --- Create the empty app ---
+    app_body: dict = {"attributes": {"name": app_name}}
+    if space_id:
+        app_body["attributes"]["spaceId"] = space_id
+    raw = await _run_qlik(["raw", "post", "v1/apps", "--body", json.dumps(app_body)])
+    if raw.startswith("Error"):
+        return raw
+    try:
+        app_id = json.loads(raw)["attributes"]["id"]
+    except (json.JSONDecodeError, KeyError):
+        return f"Error: could not parse app creation response: {raw}"
+
+    # --- Resolve catalog item IDs for each dataset ---
+    links = []
+    failed = []
+    for ds_id in dataset_ids:
+        raw = await _run_qlik([
+            "raw", "get", "v1/items",
+            "--query", f"resourceId={ds_id}",
+            "--query", "resourceType=dataset",
+        ])
+        if raw.startswith("Error"):
+            failed.append(ds_id)
+            continue
+        try:
+            parsed = json.loads(raw)
+            catalog_items = parsed if isinstance(parsed, list) else parsed.get("data", [])
+            if not catalog_items:
+                failed.append(ds_id)
+                continue
+            item = catalog_items[0]
+            item_id = item["id"]
+            item_name = item.get("name", ds_id)
+            url = (
+                f"{QLIK_TENANT_URL}/sense/app/{app_id}"
+                f"/datamanager/datamanager?type=dataset&itemId={item_id}"
+            )
+            links.append(f"  {item_name}: {url}")
+        except (json.JSONDecodeError, AttributeError, KeyError):
+            failed.append(ds_id)
+
+    result = [
+        f"App '{app_name}' created (id: {app_id}).",
+        "",
+        "Open each link in the browser and click 'Load data' to load the dataset.",
+        "Lineage from the app to the data product is registered at that point.",
+        "",
+        "Data Manager links:",
+    ] + links
+
+    if failed:
+        result += ["", f"Could not resolve catalog item IDs for {len(failed)} dataset(s): {failed}"]
+
+    return "\n".join(result)
 
 
 if __name__ == "__main__":
