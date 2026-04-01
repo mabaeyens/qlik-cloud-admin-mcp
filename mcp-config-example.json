@@ -1,9 +1,16 @@
 {
   "mcpServers": {
     "qlik-cloud-admin": {
-      "command": "python",
-      "args": ["C:/Tmp/QlikMCPRESTAPI-cli/server.py"],
-      "env": {}
+      "command": "uv",
+      "args": [
+        "--directory",
+        "C:/path/to/qlik-cloud-admin-mcp",
+        "run",
+        "server.py"
+      ],
+      "env": {
+        "QLIK_API_KEY": "your_api_key_here"
+      }
     }
   }
 }

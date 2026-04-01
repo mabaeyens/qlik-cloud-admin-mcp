@@ -111,6 +111,12 @@ precedence if both are set.
 
 Fully quit and reopen Claude Desktop. The server should appear under Settings > Connectors.
 
+### 7. Set the system prompt (recommended if also using the official Qlik MCP Server)
+
+If you have both this server and the [official Qlik MCP Server](https://help.qlik.com/en-US/cloud-services/Subsystems/Hub/Content/Sense_Hub/QlikMCP/Qlik-MCP-server-tools.htm) connected, create a Claude Desktop project and add the following system prompt so Claude always prefers the official server for analytics operations:
+
+> When both the official Qlik MCP Server and qlik-cloud-admin are connected, always prefer the official Qlik MCP tools for analytics operations (opening apps, searching fields, listing sheets, reading app content). Use qlik-cloud-admin tools only for admin and governance operations not covered by the official server.
+
 ---
 
 ## Tools
