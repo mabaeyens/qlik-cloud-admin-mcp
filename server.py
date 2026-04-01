@@ -297,6 +297,71 @@ async def qlikcloud_assistant_chat(
         return f"Error: could not parse interaction response: {raw}"
 
 
+async def _get_space_name(space_id: str) -> str:
+    """Resolve a space ID to its display name, falling back to the ID on error."""
+    raw = await _run_qlik(["raw", "get", f"v1/spaces/{space_id}"])
+    if raw.startswith("Error"):
+        return space_id
+    try:
+        return json.loads(raw).get("name", space_id)
+    except (json.JSONDecodeError, AttributeError):
+        return space_id
+
+
+def _dataset_table_name(dataset_name: str) -> str:
+    """Strip common file extensions to derive a Qlik table name."""
+    for ext in (".csv", ".txt", ".qvd", ".xlsx", ".xls"):
+        if dataset_name.lower().endswith(ext):
+            return dataset_name[: -len(ext)]
+    return dataset_name
+
+
+def _build_csv_format(load_options: dict) -> str:
+    """Build the Qlik format string from qDataFormat metadata."""
+    q = load_options.get("qDataFormat", {})
+    parts = []
+    if q.get("qType") == "CSV":
+        parts.append("txt")
+    if q.get("qCodePage") == 65001:
+        parts.append("utf8")
+    label = q.get("qLabel", "")
+    if label:
+        parts.append(label)
+    quote = q.get("qQuote", "")
+    if quote and quote.lower() not in ("", "none"):
+        parts.append(quote)
+    delim_code = q.get("qDelimiter", {}).get("qScriptCode", "")
+    if delim_code:
+        parts.append(f"delimiter is {delim_code}")
+    return ", ".join(parts)
+
+
+def _generate_dataset_script(dataset: dict, space_name: str) -> str:
+    """Generate a Qlik LOAD script section for a single dataset."""
+    store_type = (
+        dataset.get("dataAssetInfo", {}).get("dataStoreInfo", {}).get("type", "")
+    )
+    technical_name = dataset.get("technicalName", "")
+    ds_name = dataset.get("name", "unknown")
+    table_name = _dataset_table_name(ds_name)
+    fields = sorted(
+        dataset.get("schema", {}).get("dataFields", []),
+        key=lambda x: x.get("index", 0),
+    )
+    field_list = ",\n".join(f"    [{f['name']}]" for f in fields)
+
+    if store_type == "qix-datafiles":
+        fmt = _build_csv_format(dataset.get("schema", {}).get("loadOptions", {}))
+        lib_path = f"lib://{space_name}:DataFiles/{technical_name}"
+        return f"[{table_name}]:\nLOAD\n{field_list}\nFROM [{lib_path}]\n({fmt});\n"
+
+    ds_type = dataset.get("type", "unknown")
+    return (
+        f"// TODO: '{ds_name}' (type={ds_type}, store={store_type})"
+        " - script generation not yet supported for this source type\n"
+    )
+
+
 @mcp.tool()
 async def qlikcloud_create_app_from_data_product(
     app_name: str,
@@ -304,18 +369,18 @@ async def qlikcloud_create_app_from_data_product(
     data_product_id: Optional[str] = None,
     space_id: Optional[str] = None,
 ) -> str:
-    """Create a new Qlik app pre-wired to a Data Product via the Data Manager.
+    """Create a new Qlik app with a load script generated from a Data Product.
 
-    Creates an empty app, resolves the datasets inside the data product, and
-    returns a Data Manager deep-link for each dataset. Open each link in the
-    browser and click "Load data" to load the dataset - lineage from the app
-    to the data product is registered at that point by the Data Manager.
+    Fetches all datasets in the data product, generates a LOAD script section
+    for each one, creates an empty app, and sets the script. No Data Manager
+    involvement - the script is written directly from dataset metadata.
+
+    Supported source types: DataFiles (CSV, delimited text).
+    Other source types (e.g. Snowflake) generate a TODO comment placeholder.
 
     Provide either data_product_name (searched by name) or data_product_id
     (skips the lookup). If a name search returns more than one match, the tool
     returns the list and asks you to supply the ID instead.
-
-    Requires QLIK_TENANT_URL to be set in .env (e.g. https://your-tenant.eu.qlikcloud.com).
 
     Args:
         app_name: Name for the new app
@@ -323,9 +388,6 @@ async def qlikcloud_create_app_from_data_product(
         data_product_id: Data product ID (from data-governance/data-products) - skips name lookup
         space_id: Space ID to create the app in (defaults to personal space if omitted)
     """
-    if not QLIK_TENANT_URL:
-        return "Error: QLIK_TENANT_URL is not set in .env. Add it before using this tool."
-
     if not data_product_name and not data_product_id:
         return "Error: provide either data_product_name or data_product_id."
 
@@ -367,7 +429,35 @@ async def qlikcloud_create_app_from_data_product(
     if not dataset_ids:
         return f"Error: data product '{data_product_id}' has no datasets."
 
-    # --- Create the empty app ---
+    # --- Fetch metadata for each dataset and generate script sections ---
+    script_sections = []
+    skipped = []
+    space_name_cache: dict[str, str] = {}
+
+    for ds_id in dataset_ids:
+        raw = await _run_qlik(["raw", "get", f"data-governance/data-sets/{ds_id}"])
+        if raw.startswith("Error"):
+            skipped.append(f"{ds_id} (fetch failed: {raw})")
+            continue
+        try:
+            dataset = json.loads(raw)
+        except json.JSONDecodeError:
+            skipped.append(f"{ds_id} (parse failed)")
+            continue
+
+        ds_space_id = dataset.get("spaceId", "")
+        if ds_space_id not in space_name_cache:
+            space_name_cache[ds_space_id] = await _get_space_name(ds_space_id)
+        space_name = space_name_cache[ds_space_id]
+
+        script_sections.append(_generate_dataset_script(dataset, space_name))
+
+    if not script_sections:
+        return "Error: could not generate script for any dataset in this data product."
+
+    full_script = "\n".join(script_sections)
+
+    # --- Create the app ---
     app_body: dict = {"attributes": {"name": app_name}}
     if space_id:
         app_body["attributes"]["spaceId"] = space_id
@@ -379,47 +469,20 @@ async def qlikcloud_create_app_from_data_product(
     except (json.JSONDecodeError, KeyError):
         return f"Error: could not parse app creation response: {raw}"
 
-    # --- Resolve catalog item IDs for each dataset ---
-    links = []
-    failed = []
-    for ds_id in dataset_ids:
-        raw = await _run_qlik([
-            "raw", "get", "v1/items",
-            "--query", f"resourceId={ds_id}",
-            "--query", "resourceType=dataset",
-        ])
-        if raw.startswith("Error"):
-            failed.append(ds_id)
-            continue
-        try:
-            parsed = json.loads(raw)
-            catalog_items = parsed if isinstance(parsed, list) else parsed.get("data", [])
-            if not catalog_items:
-                failed.append(ds_id)
-                continue
-            item = catalog_items[0]
-            item_id = item["id"]
-            item_name = item.get("name", ds_id)
-            url = (
-                f"{QLIK_TENANT_URL}/sense/app/{app_id}"
-                f"/datamanager/datamanager?type=dataset&itemId={item_id}"
-            )
-            links.append(f"  {item_name}: {url}")
-        except (json.JSONDecodeError, AttributeError, KeyError):
-            failed.append(ds_id)
+    # --- Set the script ---
+    raw = await _run_qlik([
+        "raw", "post", f"v1/apps/{app_id}/scripts",
+        "--body", json.dumps({"script": full_script}),
+    ])
+    if raw.startswith("Error"):
+        return (
+            f"App '{app_name}' created (id: {app_id}) but script could not be set: {raw}\n"
+            f"Script content:\n{full_script}"
+        )
 
-    result = [
-        f"App '{app_name}' created (id: {app_id}).",
-        "",
-        "Open each link in the browser and click 'Load data' to load the dataset.",
-        "Lineage from the app to the data product is registered at that point.",
-        "",
-        "Data Manager links:",
-    ] + links
-
-    if failed:
-        result += ["", f"Could not resolve catalog item IDs for {len(failed)} dataset(s): {failed}"]
-
+    result = [f"App '{app_name}' created (id: {app_id}). Script set with {len(script_sections)} dataset(s)."]
+    if skipped:
+        result.append(f"Skipped {len(skipped)} dataset(s): {skipped}")
     return "\n".join(result)
 
 
