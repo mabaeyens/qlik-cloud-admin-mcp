@@ -15,6 +15,29 @@ QLIK_API_KEY = os.getenv("QLIK_API_KEY", "")
 QLIK_TENANT_URL = os.getenv("QLIK_TENANT_URL", "").rstrip("/")
 RECYCLE_BIN_NAME = "Recycle Bin"
 
+QLIK_MAIN_TAB = """\
+///$tab Main
+SET ThousandSep=',';
+SET DecimalSep='.';
+SET MoneyThousandSep=',';
+SET MoneyDecimalSep='.';
+SET MoneyFormat='$#,##0.00;-$#,##0.00';
+SET TimeFormat='h:mm:ss TT';
+SET DateFormat='M/D/YYYY';
+SET TimestampFormat='M/D/YYYY h:mm:ss[.fff] TT';
+SET FirstWeekDay=6;
+SET BrokenWeeks=1;
+SET ReferenceDay=0;
+SET FirstMonthOfYear=1;
+SET CollationLocale='en-US';
+SET CreateSearchIndexOnReload=1;
+SET MonthNames='Jan;Feb;Mar;Apr;May;Jun;Jul;Aug;Sep;Oct;Nov;Dec';
+SET LongMonthNames='January;February;March;April;May;June;July;August;September;October;November;December';
+SET DayNames='Mon;Tue;Wed;Thu;Fri;Sat;Sun';
+SET LongDayNames='Monday;Tuesday;Wednesday;Thursday;Friday;Saturday;Sunday';
+SET NumericalAbbreviation='3:k;6:M;9:G;12:T;15:P;18:E;21:Z;24:Y;-3:m;-6:μ;-9:n;-12:p;-15:f;-18:a;-21:z;-24:y';\
+"""
+
 
 def _build_env() -> dict:
     """Return environment for qlik subprocess, injecting API key if set."""
@@ -526,7 +549,7 @@ async def qlikcloud_create_app_from_data_product(
     # Warn if connection name was needed but not provided
     needs_conn_warning = conn_groups and not connection_name
 
-    full_script = "\n".join(script_parts)
+    full_script = QLIK_MAIN_TAB + "\n\n///$tab Script\n" + "\n".join(script_parts)
 
     # --- Create the app ---
     app_body: dict = {"attributes": {"name": app_name}}
