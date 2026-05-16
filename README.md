@@ -219,6 +219,3 @@ Feel free to fork this project!
 - If you find a bug, open an issue.
 - If you have an improvement, submit a Pull Request.
 - Feel free to use this code in your own projects!
-
----
-*Developed by Miguel Baeyens*
