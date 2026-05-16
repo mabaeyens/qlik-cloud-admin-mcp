@@ -201,7 +201,7 @@ See [CHANGELOG.md](CHANGELOG.md) for release notes.
 
 This project is the result of a strategic collaboration between human design and AI-assisted code generation.
 
-- **Architecture & Logic:** Fully defined by the author (Miguel Baeyens). This includes system structure, business rules, data flow, and implementation strategy.
+- **Architecture & Logic:** Fully defined by the author. This includes system structure, business rules, data flow, and implementation strategy.
 - **Code Generation:** The syntactic implementation and line-by-line code writing was performed by **Claude Code**, following precise and iterative instructions provided by the author.
 - **Supervision & Refinement:** All code was manually reviewed, tested, and adjusted to ensure quality, consistency, and compliance with project standards.
 
